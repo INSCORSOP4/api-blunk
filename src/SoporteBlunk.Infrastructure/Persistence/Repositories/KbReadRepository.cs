@@ -5,7 +5,6 @@ using SoporteBlunk.Application.Common.Exceptions;
 using SoporteBlunk.Domain.Interfaces;
 using SoporteBlunk.Domain.Models;
 using SoporteBlunk.Infrastructure.Persistence.Kb;
-using SoporteBlunk.Infrastructure.Persistence.Sql;
 
 namespace SoporteBlunk.Infrastructure.Persistence.Repositories;
 
@@ -31,7 +30,7 @@ internal sealed class KbReadRepository(IKbConnectionFactory factory) : IKbReadRe
     private sealed record VersionRow(int Version, DateTime Fecha, string Usuario);
 
     private static CommandDefinition Cmd(string sql, object? p, CancellationToken ct) =>
-        new(sql, p, commandTimeout: TicketSql.CommandTimeoutSeconds, cancellationToken: ct);
+        new(sql, p, commandTimeout: ConsultaDefaults.TimeoutSegundos, cancellationToken: ct);
 
     private static DateTimeOffset Utc(DateTime d) => new(DateTime.SpecifyKind(d, DateTimeKind.Utc));
 

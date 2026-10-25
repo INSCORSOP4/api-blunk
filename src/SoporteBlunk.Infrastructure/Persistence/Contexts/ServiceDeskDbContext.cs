@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using SoporteBlunk.Domain.Entities.ServiceDesk;
-using SoporteBlunk.Infrastructure.Persistence.Sql;
 
 namespace SoporteBlunk.Infrastructure.Persistence.Contexts;
 
@@ -37,7 +36,7 @@ internal sealed class ServiceDeskDbContext(DbContextOptions<ServiceDeskDbContext
     /// igual que el SQL anterior y no agreguen comprobaciones de IS NULL.
     /// </summary>
     internal static void Configurar(DbContextOptionsBuilder opciones, string cadena) => opciones
-        .UseSqlServer(cadena, sql => sql.CommandTimeout(TicketSql.CommandTimeoutSeconds).UseRelationalNulls())
+        .UseSqlServer(cadena, sql => sql.CommandTimeout(ConsultaDefaults.TimeoutSegundos).UseRelationalNulls())
         .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>

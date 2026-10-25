@@ -11,7 +11,6 @@ using SoporteBlunk.Infrastructure.Persistence;
 using SoporteBlunk.Infrastructure.Persistence.Contexts;
 using SoporteBlunk.Infrastructure.Persistence.Kb;
 using SoporteBlunk.Infrastructure.Persistence.Msdb;
-using SoporteBlunk.Infrastructure.Persistence.Sql;
 using SoporteBlunk.Infrastructure.Persistence.Repositories;
 using SoporteBlunk.Infrastructure.Security;
 

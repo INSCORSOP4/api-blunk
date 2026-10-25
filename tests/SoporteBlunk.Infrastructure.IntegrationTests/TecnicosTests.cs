@@ -100,8 +100,8 @@ public class TecnicosParidadTests
         n.Should().NotBeNull(motivo);
         n!.Should().BeEquivalentTo(a with { PromedioHorasPrimeraRespuesta = null, PromedioHorasResolucion = null },
             o => o.Excluding(x => x.PromedioHorasPrimeraRespuesta).Excluding(x => x.PromedioHorasResolucion), motivo);
-        (n.PromedioHorasPrimeraRespuesta is null).Should().Be(a.PromedioHorasPrimeraRespuesta is null, motivo + " (primera respuesta nula)");
-        (n.PromedioHorasResolucion is null).Should().Be(a.PromedioHorasResolucion is null, motivo + " (resolución nula)");
+        (n!.PromedioHorasPrimeraRespuesta is null).Should().Be(a.PromedioHorasPrimeraRespuesta is null, motivo + " (primera respuesta nula)");
+        (n!.PromedioHorasResolucion is null).Should().Be(a.PromedioHorasResolucion is null, motivo + " (resolución nula)");
         if (a.PromedioHorasPrimeraRespuesta is { } r) n.PromedioHorasPrimeraRespuesta!.Value.Should().BeApproximately(r, 1e-6, motivo);
         if (a.PromedioHorasResolucion is { } s) n.PromedioHorasResolucion!.Value.Should().BeApproximately(s, 1e-6, motivo);
     }
