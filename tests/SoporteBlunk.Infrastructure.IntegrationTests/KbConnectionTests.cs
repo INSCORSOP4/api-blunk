@@ -3,7 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SoporteBlunk.Application.Common.Exceptions;
 using SoporteBlunk.Domain.Interfaces;
-using SoporteBlunk.Infrastructure.Persistence.Kb;
+using SoporteBlunk.Infrastructure.Persistence.Repositories;
 
 namespace SoporteBlunk.Infrastructure.IntegrationTests;
 
@@ -15,9 +15,9 @@ public class KbConnectionTests
     [InlineData("   ")]
     public async Task Sin_cadena_de_conexion_responde_KbNoDisponible_sin_intentar_conectar(string? cadena)
     {
-        var fabrica = new KbConnectionFactory(cadena);
+        await using var db = ContextoDePrueba.Kb(cadena);
 
-        var act = () => fabrica.OpenAsync(default);
+        var act = () => new KbReadRepository(db).EstadoAsync(default);
 
         await act.Should().ThrowAsync<KbNoDisponibleException>().WithMessage("*no está configurada*");
     }
@@ -26,12 +26,14 @@ public class KbConnectionTests
     public async Task Servidor_inalcanzable_responde_KbNoDisponible_y_no_expone_la_cadena()
     {
         // Puerto cerrado en localhost: falla de inmediato sin depender de la red.
-        var fabrica = new KbConnectionFactory("Server=127.0.0.1,1;Database=SoporteKB;User Id=x;Password=secreto-de-prueba;Connect Timeout=2;TrustServerCertificate=True");
+        await using var db = ContextoDePrueba.Kb("Server=127.0.0.1,1;Database=SoporteKB;User Id=x;Password=secreto-de-prueba;Connect Timeout=2;TrustServerCertificate=True");
 
-        var act = () => fabrica.OpenAsync(default);
+        var act = () => new KbReadRepository(db).EstadoAsync(default);
 
         var ex = (await act.Should().ThrowAsync<KbNoDisponibleException>()).Which;
         ex.Message.Should().NotContain("secreto-de-prueba");
+        // Tampoco debe quedar en la excepción interna que se registra en el log (EF no la incluye en sus mensajes).
+        ex.ToString().Should().NotContain("secreto-de-prueba");
     }
 
     [SkippableFact]

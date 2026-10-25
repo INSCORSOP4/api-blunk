@@ -65,7 +65,9 @@ public sealed class KbReadRepositoryTests : IAsyncLifetime
         var notas = archivos.Select(a => a.Split('|', 2)).Select(a =>
             _procesador.ProcesarArchivo(new ArchivoSubido(a[0], Encoding.UTF8.GetBytes(a[1]))).Nota!).ToList();
 
-        await new KbImportacionRepository(new KbConnectionFactory(_cadena)).GuardarAsync(
+        var dbImportacion = ContextoDePrueba.Kb(_cadena);
+        _contextos.Add(dbImportacion);
+        await new KbImportacionRepository(dbImportacion).GuardarAsync(
             new ContextoImportacion(_usuario, "archivos"), notas, new ResumenArchivos(notas.Count, 0, 0), _ => "{}", default);
     }
 

@@ -9,7 +9,6 @@ using SoporteBlunk.Domain.Interfaces;
 using SoporteBlunk.Infrastructure.Exports;
 using SoporteBlunk.Infrastructure.Persistence;
 using SoporteBlunk.Infrastructure.Persistence.Contexts;
-using SoporteBlunk.Infrastructure.Persistence.Kb;
 using SoporteBlunk.Infrastructure.Persistence.Msdb;
 using SoporteBlunk.Infrastructure.Persistence.Repositories;
 using SoporteBlunk.Infrastructure.Security;
@@ -34,7 +33,6 @@ public static class DependencyInjection
         services.AddScoped<ITecnicoReadRepository, TecnicoReadRepository>();
         services.AddSingleton<ITicketExcelExporter, TicketExcelExporter>();
         // Base de conocimiento (propia, con escritura). Si no está configurada, sus endpoints responden 503.
-        services.AddSingleton<IKbConnectionFactory>(new KbConnectionFactory(configuration.GetConnectionString("SoporteKB")));
         services.AddScoped<IKbReadRepository, KbReadRepository>();
         services.AddScoped<IKbImportacionRepository, KbImportacionRepository>();
         services.AddOptions<ConocimientoOptions>().Bind(configuration.GetSection(ConocimientoOptions.Section));

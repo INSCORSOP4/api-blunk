@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using SoporteBlunk.Application.Common.Exceptions;
 
+// Fábrica de conexiones de Dapper, conservada solo para las copias de referencia de los tests de paridad.
 namespace SoporteBlunk.Infrastructure.Persistence.Kb;
 
 /// <summary>Conexión a SoporteKB (base propia, con escritura). Es independiente de la de ServiceDesk, que es solo lectura.</summary>

@@ -3,6 +3,8 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using SoporteBlunk.Application.Abstractions;
 using SoporteBlunk.Application.Common.Exceptions;
+using SoporteBlunk.Application.Common.Options;
+using SoporteBlunk.Application.Conocimiento;
 using SoporteBlunk.Domain.Interfaces;
 using SoporteBlunk.Domain.Models;
 using SoporteBlunk.Infrastructure.Persistence.Contexts;
@@ -96,7 +98,21 @@ public class KbFase2SqlTests
         ["Auditoria.Marcar"] = db => new AuditoriaMicrosipRepository(db).MarcarAsync(1, ResultadoCambio.Aplicado, null, default),
         ["Auditoria.Listar"] = db => new AuditoriaMicrosipRepository(db).ListarAsync(10, default),
         ["Archivos.Listar"] = db => new ArchivosReadRepository(db).ListarAsync(default),
+        // Fase 3: Conocimiento
+        ["Conocimiento.Estado"] = db => new KbReadRepository(db).EstadoAsync(default),
+        ["Conocimiento.Listar"] = db => new KbReadRepository(db).ListarDocumentosAsync(new DocumentoFiltro { Buscar = "a" }, 1, 10, default),
+        ["Conocimiento.Obtener"] = db => new KbReadRepository(db).ObtenerDocumentoAsync(1, default),
+        ["Conocimiento.Carpetas"] = db => new KbReadRepository(db).CarpetasAsync(default),
+        ["Conocimiento.Etiquetas"] = db => new KbReadRepository(db).EtiquetasAsync(default),
+        ["Importacion.Reglas"] = db => new KbImportacionRepository(db).ReglasOmisionAsync(default),
+        ["Importacion.Listar"] = db => new KbImportacionRepository(db).ListarAsync(10, default),
+        ["Importacion.Obtener"] = db => new KbImportacionRepository(db).ObtenerAsync(1, default),
+        ["Importacion.Guardar"] = db => new KbImportacionRepository(db).GuardarAsync(
+            new ContextoImportacion(Quien, "archivos"), [NotaDePrueba], new ResumenArchivos(1, 0, 0), _ => "{}", default),
     };
+
+    private static readonly NotaProcesada NotaDePrueba = new ProcesadorNotas(new ReglasOmisionService([]), new ConocimientoOptions())
+        .ProcesarArchivo(new ArchivoSubido("prueba/Nota.md", System.Text.Encoding.UTF8.GetBytes("# Nota"))).Nota!;
 
     public static TheoryData<string> Nombres => new(Operaciones().Keys);
 
