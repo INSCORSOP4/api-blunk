@@ -11,6 +11,7 @@ using SoporteBlunk.Infrastructure.Persistence;
 using SoporteBlunk.Infrastructure.Persistence.Contexts;
 using SoporteBlunk.Infrastructure.Persistence.Kb;
 using SoporteBlunk.Infrastructure.Persistence.Msdb;
+using SoporteBlunk.Infrastructure.Persistence.Sql;
 using SoporteBlunk.Infrastructure.Persistence.Repositories;
 using SoporteBlunk.Infrastructure.Security;
 
@@ -68,7 +69,9 @@ public static class DependencyInjection
     /// </summary>
     private static void AddContextos(IServiceCollection services, IConfiguration configuration, string serviceDesk)
     {
-        services.AddDbContext<ServiceDeskDbContext>(o => o.UseSqlServer(serviceDesk).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+        services.AddDbContext<ServiceDeskDbContext>(o => o
+            .UseSqlServer(serviceDesk, sql => sql.CommandTimeout(TicketSql.CommandTimeoutSeconds))
+            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
 
         var kb = configuration.GetConnectionString("SoporteKB");
         if (string.IsNullOrWhiteSpace(kb))
