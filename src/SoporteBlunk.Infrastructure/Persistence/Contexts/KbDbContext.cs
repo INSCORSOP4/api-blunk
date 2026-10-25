@@ -13,6 +13,15 @@ internal sealed class KbDbContext(DbContextOptions<KbDbContext> options) : DbCon
     public DbSet<AuditoriaCambioMicrosip> CambiosMicrosip => Set<AuditoriaCambioMicrosip>();
     public DbSet<ArchivoEsperado> ArchivosEsperados => Set<ArchivoEsperado>();
     public DbSet<RevisionArchivo> RevisionesArchivo => Set<RevisionArchivo>();
+    public DbSet<KbVersionEsquema> VersionesEsquema => Set<KbVersionEsquema>();
+    public DbSet<KbImportacion> Importaciones => Set<KbImportacion>();
+    public DbSet<KbDocumento> Documentos => Set<KbDocumento>();
+    public DbSet<KbDocumentoVersion> DocumentoVersiones => Set<KbDocumentoVersion>();
+    public DbSet<KbDocumentoAlias> DocumentoAliases => Set<KbDocumentoAlias>();
+    public DbSet<KbEtiqueta> Etiquetas => Set<KbEtiqueta>();
+    public DbSet<KbDocumentoEtiqueta> DocumentoEtiquetas => Set<KbDocumentoEtiqueta>();
+    public DbSet<KbEnlace> Enlaces => Set<KbEnlace>();
+    public DbSet<KbReglaOmision> ReglasOmision => Set<KbReglaOmision>();
 
     /// <summary>
     /// Configuración única del contexto (la usan la API y los tests). Sin cadena, el contexto se crea pero abrir la conexión lanza

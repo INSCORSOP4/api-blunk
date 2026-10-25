@@ -15,6 +15,7 @@ namespace SoporteBlunk.Infrastructure.IntegrationTests;
 /// Pruebas contra SoporteKB real (servidor de pruebas). Cada prueba usa rutas, etiquetas y un correo únicos
 /// y borra todo lo que creó al terminar. Se omiten si no hay ConnectionStrings__SoporteKB.
 /// </summary>
+[Collection(ColeccionSoporteKb.Nombre)]
 public sealed class KbImportacionRepositoryTests : IAsyncLifetime
 {
     private readonly string _cadena = Environment.GetEnvironmentVariable("ConnectionStrings__SoporteKB") ?? "";

@@ -32,6 +32,7 @@ public class KbBusquedaUtilidadesTests
 }
 
 /// <summary>Búsqueda y lectura contra SoporteKB real (servidor de pruebas). Cada prueba crea sus notas y las borra al terminar.</summary>
+[Collection(ColeccionSoporteKb.Nombre)]
 public sealed class KbReadRepositoryTests : IAsyncLifetime
 {
     private readonly string _cadena = Environment.GetEnvironmentVariable("ConnectionStrings__SoporteKB") ?? "";
@@ -43,7 +44,14 @@ public sealed class KbReadRepositoryTests : IAsyncLifetime
 
     private string P => $"__test_{_id}";
     private string Tag => $"zz{_id}";
-    private KbReadRepository Lectura() => new(new KbConnectionFactory(_cadena));
+    private readonly List<SoporteBlunk.Infrastructure.Persistence.Contexts.KbDbContext> _contextos = [];
+
+    private KbReadRepository Lectura()
+    {
+        var db = ContextoDePrueba.Kb(_cadena);
+        _contextos.Add(db);
+        return new KbReadRepository(db);
+    }
 
     private async Task Sembrar()
     {
@@ -70,6 +78,7 @@ public sealed class KbReadRepositoryTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        foreach (var c in _contextos) await c.DisposeAsync();
         if (string.IsNullOrWhiteSpace(_cadena)) return;
         await using var cn = await new KbConnectionFactory(_cadena).OpenAsync(default);
         await cn.ExecuteAsync("""
