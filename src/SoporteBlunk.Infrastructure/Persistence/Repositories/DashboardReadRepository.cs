@@ -15,7 +15,7 @@ internal sealed class DashboardReadRepository(ServiceDeskDbContext db) : IDashbo
         var hoyMs = TiempoServiceDesk.InicioDelDiaMs(ZonaHoraria.Hoy());
 
         // Sin solicitudes en el rango el agregado devuelve ceros (como el SELECT COUNT(*) sin GROUP BY), no ninguna fila.
-        var r = await DashboardConsultas.Resumen(consulta, hoyMs).FirstOrDefaultAsync(ct) ?? new ResumenDashboardFila();
+        var r = await DashboardConsultas.Resumen(consulta, hoyMs).SingleOrDefaultAsync(ct) ?? new ResumenDashboardFila();
         var porEstado = await DashboardConsultas.PorEstado(consulta).ToListAsync(ct);
 
         return new DashboardResumen(r.Total, r.Abiertos, r.Cerrados, r.Vencidos, r.CreadosHoy, r.CerradosHoy, r.SinAsignar,
@@ -70,7 +70,7 @@ internal sealed class DashboardReadRepository(ServiceDeskDbContext db) : IDashbo
 
     public async Task<SlaResumen> SlaAsync(DateOnly? desde, DateOnly? hasta, CancellationToken ct)
     {
-        var r = await DashboardConsultas.Sla(DashboardConsultas.EnRango(db, desde, hasta)).FirstOrDefaultAsync(ct) ?? new SlaFila();
+        var r = await DashboardConsultas.Sla(DashboardConsultas.EnRango(db, desde, hasta)).SingleOrDefaultAsync(ct) ?? new SlaFila();
         var enTiempo = r.Total - r.Vencidos;
         var pct = r.Total == 0 ? 100d : Math.Round(enTiempo * 100d / r.Total, 2);
         return new SlaResumen(r.Total, r.Vencidos, enTiempo, pct);
