@@ -30,6 +30,8 @@ public class CatalogosSqlTests
         { "departamentos", "DepartmentDefinition", "DEPTID", "DEPTNAME", "DEPTNAME", "" },
     };
 
+    public static TheoryData<string> Nombres => new(Esperados.Select(e => (string)e[0]));
+
     private static ServiceDeskDbContext Contexto(string cs = "Server=x;Database=x") => ContextoDePrueba.ServiceDesk(cs);
 
     [Theory]
@@ -56,8 +58,8 @@ public class CatalogosSqlTests
     }
 
     [SkippableTheory]
-    [MemberData(nameof(Esperados))]
-    public async Task Los_resultados_son_identicos_a_los_de_Dapper(string catalogo, string _, string __, string ___, string ____, string _____)
+    [MemberData(nameof(Nombres))]
+    public async Task Los_resultados_son_identicos_a_los_de_Dapper(string catalogo)
     {
         var cs = Environment.GetEnvironmentVariable("ConnectionStrings__ServiceDesk");
         Skip.If(string.IsNullOrWhiteSpace(cs), "Falta ConnectionStrings__ServiceDesk");

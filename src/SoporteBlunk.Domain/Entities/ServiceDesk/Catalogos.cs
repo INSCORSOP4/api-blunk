@@ -15,7 +15,7 @@ public sealed class PriorityDefinition
 {
     public long Id { get; init; }
     public string? Nombre { get; init; }
-    public int Orden { get; init; }
+    public long Orden { get; init; }
     public bool Eliminado { get; init; }
 }
 
