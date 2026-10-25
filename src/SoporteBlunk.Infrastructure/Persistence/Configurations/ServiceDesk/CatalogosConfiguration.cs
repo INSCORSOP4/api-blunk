@@ -22,8 +22,11 @@ internal static class CatalogoMapeo
 
 internal sealed class StatusDefinitionConfiguration : IEntityTypeConfiguration<StatusDefinition>
 {
-    public void Configure(EntityTypeBuilder<StatusDefinition> b) =>
+    public void Configure(EntityTypeBuilder<StatusDefinition> b)
+    {
         CatalogoMapeo.Mapear(b, "StatusDefinition", "STATUSID", "STATUSNAME");
+        b.Property(x => x.EsPendiente).HasColumnName("ISPENDING");
+    }
 }
 
 internal sealed class PriorityDefinitionConfiguration : IEntityTypeConfiguration<PriorityDefinition>

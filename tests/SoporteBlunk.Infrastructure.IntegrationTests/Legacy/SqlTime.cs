@@ -3,6 +3,8 @@ using SoporteBlunk.Application.Common;
 
 namespace SoporteBlunk.Infrastructure.Persistence.Sql;
 
+// SQL original de Dapper, conservado solo para las copias de referencia usadas en los tests de paridad.
+
 internal static class SqlTime
 {
     // El servidor de ServiceDesk corre en Windows; los tiempos se guardan en ms UTC desde 1970.

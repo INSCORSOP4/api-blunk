@@ -1,87 +1,72 @@
-using Dapper;
 using FluentValidation;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using SoporteBlunk.Application.Common.Exceptions;
+using SoporteBlunk.Domain.Entities.Kb;
 using SoporteBlunk.Domain.Interfaces;
 using SoporteBlunk.Domain.Models;
-using SoporteBlunk.Infrastructure.Persistence.Kb;
+using SoporteBlunk.Infrastructure.Persistence.Contexts;
+using SoporteBlunk.Infrastructure.Persistence.Queries;
 
 namespace SoporteBlunk.Infrastructure.Persistence.Repositories;
 
-internal sealed class BitacoraRepository(IKbConnectionFactory factory) : IBitacoraRepository
+internal sealed class BitacoraRepository(KbDbContext db) : IBitacoraRepository
 {
     public async Task<IReadOnlyList<ActividadBitacora>> ListarActividadesAsync(string grupo, bool incluirInactivas, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
-        var filas = await conn.QueryAsync<FilaActividad>(new CommandDefinition(
-            """
-            SELECT ActividadId, Grupo, Nombre, Orden, Activa
-            FROM bitacora.Actividad
-            WHERE Grupo = @Grupo AND (@IncluirInactivas = 1 OR Activa = 1)
-            ORDER BY Orden, Nombre;
-            """,
-            new { Grupo = grupo, IncluirInactivas = incluirInactivas }, commandTimeout: 15, cancellationToken: ct));
-        return filas.Select(Mapear).ToList();
+        var filas = await BitacoraConsultas.Actividades(db, grupo, incluirInactivas).ToListAsync(ct);
+        return filas.ConvertAll(Mapear);
     }
 
     public async Task<ActividadBitacora?> ObtenerActividadAsync(int actividadId, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
-        var fila = await conn.QueryFirstOrDefaultAsync<FilaActividad>(new CommandDefinition(
-            "SELECT ActividadId, Grupo, Nombre, Orden, Activa FROM bitacora.Actividad WHERE ActividadId = @Id;",
-            new { Id = actividadId }, commandTimeout: 15, cancellationToken: ct));
+        var fila = await db.BitacoraActividades.FirstOrDefaultAsync(a => a.Id == actividadId, ct);
         return fila is null ? null : Mapear(fila);
     }
 
     public async Task<ActividadBitacora> CrearActividadAsync(string grupo, string nombre, string usuario, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
+        int id;
         try
         {
             // El siguiente Orden es el máximo actual del grupo + 1 (se agrega al final).
-            var id = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
-                """
-                INSERT INTO bitacora.Actividad (Grupo, Nombre, Orden, Activa, CreadoPor)
-                OUTPUT INSERTED.ActividadId
-                SELECT @Grupo, @Nombre, ISNULL((SELECT MAX(Orden) FROM bitacora.Actividad WHERE Grupo = @Grupo), 0) + 1, 1, @Usuario;
-                """,
-                new { Grupo = grupo, Nombre = nombre, Usuario = usuario }, commandTimeout: 15, cancellationToken: ct));
-            return (await ObtenerActividadAsync(id, ct))!;
+            var maximo = await db.BitacoraActividades.Where(a => a.Grupo == grupo).MaxAsync(a => (int?)a.Orden, ct) ?? 0;
+            var nueva = new BitacoraActividad { Grupo = grupo, Nombre = nombre, Orden = maximo + 1, Activa = true, CreadoPor = usuario };
+            db.BitacoraActividades.Add(nueva);
+            await db.SaveChangesAsync(ct);
+            id = nueva.Id;
         }
-        catch (SqlException ex) when (ex.Number == 2627) // violación de UQ (Grupo, Nombre)
+        catch (Exception ex) when (EsLlaveDuplicada(ex)) // violación de UQ (Grupo, Nombre)
         {
+            db.ChangeTracker.Clear();
             throw new ValidationException($"Ya existe una actividad llamada \"{nombre}\" en esta bitácora.");
         }
-        catch (SqlException ex)
+        catch (Exception ex) when (EsErrorDeBase(ex))
         {
+            db.ChangeTracker.Clear();
             throw new KbNoDisponibleException("No se pudo crear la actividad en la bitácora.", ex);
         }
+        return (await ObtenerActividadAsync(id, ct))!;
     }
 
     public async Task<ActividadBitacora> ActualizarActividadAsync(
         int actividadId, string? nombre, bool? activa, int? orden, string usuario, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
         try
         {
-            await conn.ExecuteAsync(new CommandDefinition(
-                """
-                UPDATE bitacora.Actividad
-                SET Nombre = COALESCE(@Nombre, Nombre),
-                    Activa = COALESCE(@Activa, Activa),
-                    Orden = COALESCE(@Orden, Orden),
-                    ActualizadoPor = @Usuario,
-                    ActualizadoEn = SYSDATETIME()
-                WHERE ActividadId = @Id;
-                """,
-                new { Id = actividadId, Nombre = nombre, Activa = activa, Orden = orden, Usuario = usuario },
-                commandTimeout: 15, cancellationToken: ct));
+            // Los parámetros nulos no se tocan (COALESCE con el valor actual). La hora la pone el servidor SQL (GETDATE()).
+            await db.BitacoraActividades.Where(a => a.Id == actividadId).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.Nombre, a => nombre ?? a.Nombre)
+                .SetProperty(a => a.Activa, a => activa ?? a.Activa)
+                .SetProperty(a => a.Orden, a => orden ?? a.Orden)
+                .SetProperty(a => a.ActualizadoPor, usuario)
+                .SetProperty(a => a.ActualizadoEn, a => DateTime.Now), ct);
         }
-        catch (SqlException ex) when (ex.Number == 2627)
+        catch (Exception ex) when (EsLlaveDuplicada(ex))
         {
             throw new ValidationException($"Ya existe una actividad llamada \"{nombre}\" en esta bitácora.");
         }
-        catch (SqlException ex)
+        catch (Exception ex) when (EsErrorDeBase(ex))
         {
             throw new KbNoDisponibleException("No se pudo actualizar la actividad de la bitácora.", ex);
         }
@@ -90,94 +75,52 @@ internal sealed class BitacoraRepository(IKbConnectionFactory factory) : IBitaco
 
     public async Task<ChecklistDia> ObtenerChecklistAsync(string grupo, DateOnly fecha, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
-        // Actividades activas hoy + las que tengan registro ese día aunque ya se hayan desactivado (no se pierde historial).
-        var filas = await conn.QueryAsync<FilaItem>(new CommandDefinition(
-            """
-            SELECT a.ActividadId, a.Nombre, a.Orden, a.Activa AS ActividadActiva,
-                   c.Estado, c.Observacion, c.CreadoPor AS RevisadoPor, c.CreadoEn AS RevisadoEn,
-                   c.ActualizadoPor, c.ActualizadoEn
-            FROM bitacora.Actividad a
-            LEFT JOIN bitacora.ChecklistDiario c ON c.ActividadId = a.ActividadId AND c.Fecha = @Fecha
-            WHERE a.Grupo = @Grupo AND (a.Activa = 1 OR c.ActividadId IS NOT NULL)
-            ORDER BY a.Orden, a.Nombre;
-            """,
-            new { Grupo = grupo, Fecha = fecha.ToDateTime(TimeOnly.MinValue) }, commandTimeout: 15, cancellationToken: ct));
-
-        return new ChecklistDia(grupo, fecha, filas.Select(Mapear).ToList());
+        var filas = await BitacoraConsultas.Checklist(db, grupo, fecha).ToListAsync(ct);
+        return new ChecklistDia(grupo, fecha, filas.ConvertAll(f => f.ToDomain()));
     }
 
     public async Task<ItemChecklist> GuardarChecklistAsync(
         int actividadId, DateOnly fecha, EstadoChecklist estado, string? observacion, string usuario, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
         try
         {
-            await conn.ExecuteAsync(new CommandDefinition(
-                """
-                MERGE bitacora.ChecklistDiario AS destino
-                USING (SELECT @Fecha AS Fecha, @ActividadId AS ActividadId) AS origen
-                ON destino.Fecha = origen.Fecha AND destino.ActividadId = origen.ActividadId
-                WHEN MATCHED THEN
-                    UPDATE SET Estado = @Estado, Observacion = @Observacion, ActualizadoPor = @Usuario, ActualizadoEn = SYSDATETIME()
-                WHEN NOT MATCHED THEN
-                    INSERT (Fecha, ActividadId, Estado, Observacion, CreadoPor)
-                    VALUES (origen.Fecha, origen.ActividadId, @Estado, @Observacion, @Usuario);
-                """,
-                new
+            // Equivale al MERGE anterior: corrige el registro del día si ya existe y, si no, lo crea.
+            if (await CorregirAsync(actividadId, fecha, estado, observacion, usuario, ct) == 0)
+            {
+                try
                 {
-                    Fecha = fecha.ToDateTime(TimeOnly.MinValue),
-                    ActividadId = actividadId,
-                    Estado = estado.ToString(),
-                    Observacion = observacion,
-                    Usuario = usuario,
-                },
-                commandTimeout: 15, cancellationToken: ct));
+                    db.BitacoraChecklist.Add(new BitacoraChecklist
+                    {
+                        Fecha = fecha, ActividadId = actividadId, Estado = estado, Observacion = observacion, CreadoPor = usuario,
+                    });
+                    await db.SaveChangesAsync(ct);
+                }
+                catch (Exception ex) when (EsLlaveDuplicada(ex))
+                {
+                    // Otro usuario creó el mismo registro entre el UPDATE y el INSERT: ahora existe, se corrige.
+                    db.ChangeTracker.Clear();
+                    await CorregirAsync(actividadId, fecha, estado, observacion, usuario, ct);
+                }
+            }
         }
-        catch (SqlException ex)
+        catch (Exception ex) when (EsErrorDeBase(ex))
         {
+            db.ChangeTracker.Clear();
             throw new KbNoDisponibleException("No se pudo guardar el estado en la bitácora.", ex);
         }
 
-        var fila = await conn.QuerySingleAsync<FilaItem>(new CommandDefinition(
-            """
-            SELECT a.ActividadId, a.Nombre, a.Orden, a.Activa AS ActividadActiva,
-                   c.Estado, c.Observacion, c.CreadoPor AS RevisadoPor, c.CreadoEn AS RevisadoEn,
-                   c.ActualizadoPor, c.ActualizadoEn
-            FROM bitacora.Actividad a
-            JOIN bitacora.ChecklistDiario c ON c.ActividadId = a.ActividadId
-            WHERE a.ActividadId = @ActividadId AND c.Fecha = @Fecha;
-            """,
-            new { ActividadId = actividadId, Fecha = fecha.ToDateTime(TimeOnly.MinValue) }, commandTimeout: 15, cancellationToken: ct));
-        return Mapear(fila);
+        var fila = await BitacoraConsultas.ItemGuardado(db, actividadId, fecha).SingleAsync(ct);
+        return fila.ToDomain();
     }
 
     public async Task<IReadOnlyList<ResumenDia>> ObtenerResumenAsync(string grupo, DateOnly desde, DateOnly hasta, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
-        var filas = await conn.QueryAsync<FilaResumen>(new CommandDefinition(
-            """
-            SELECT c.Fecha,
-                   SUM(CASE WHEN c.Estado = 'Ok' THEN 1 ELSE 0 END) AS Ok,
-                   SUM(CASE WHEN c.Estado = 'Advertencia' THEN 1 ELSE 0 END) AS Advertencia,
-                   SUM(CASE WHEN c.Estado = 'Falla' THEN 1 ELSE 0 END) AS Falla,
-                   SUM(CASE WHEN c.Estado = 'Critico' THEN 1 ELSE 0 END) AS Critico,
-                   SUM(CASE WHEN c.Estado = 'NoAplica' THEN 1 ELSE 0 END) AS NoAplica,
-                   COUNT(*) AS Total
-            FROM bitacora.ChecklistDiario c
-            JOIN bitacora.Actividad a ON a.ActividadId = c.ActividadId
-            WHERE a.Grupo = @Grupo AND c.Fecha BETWEEN @Desde AND @Hasta
-            GROUP BY c.Fecha;
-            """,
-            new { Grupo = grupo, Desde = desde.ToDateTime(TimeOnly.MinValue), Hasta = hasta.ToDateTime(TimeOnly.MinValue) },
-            commandTimeout: 15, cancellationToken: ct));
+        var filas = await BitacoraConsultas.ResumenPorDia(db, grupo, desde, hasta).ToListAsync(ct);
 
         // El total de actividades activas de hoy sirve para calcular "pendientes" aunque el día no tenga ningún registro.
-        var totalActivas = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
-            "SELECT COUNT(*) FROM bitacora.Actividad WHERE Grupo = @Grupo AND Activa = 1;",
-            new { Grupo = grupo }, commandTimeout: 15, cancellationToken: ct));
+        var totalActivas = await db.BitacoraActividades.CountAsync(a => a.Grupo == grupo && a.Activa, ct);
 
-        var porFecha = filas.ToDictionary(f => DateOnly.FromDateTime(f.Fecha));
+        var porFecha = filas.ToDictionary(f => f.Fecha);
         var resultado = new List<ResumenDia>();
         for (var fecha = desde; fecha <= hasta; fecha = fecha.AddDays(1))
         {
@@ -192,43 +135,25 @@ internal sealed class BitacoraRepository(IKbConnectionFactory factory) : IBitaco
 
     public async Task<IReadOnlyList<CambioChecklist>> UltimosCambiosAsync(int maximo, CancellationToken ct)
     {
-        await using var conn = await Abrir(ct);
-        var filas = await conn.QueryAsync<FilaCambio>(new CommandDefinition(
-            """
-            SELECT TOP (@Maximo) a.Grupo, a.Nombre AS ActividadNombre, c.Fecha, c.Estado, c.Observacion,
-                   COALESCE(c.ActualizadoPor, c.CreadoPor) AS Usuario,
-                   COALESCE(c.ActualizadoEn, c.CreadoEn) AS Cuando
-            FROM bitacora.ChecklistDiario c
-            JOIN bitacora.Actividad a ON a.ActividadId = c.ActividadId
-            ORDER BY Cuando DESC;
-            """,
-            new { Maximo = maximo }, commandTimeout: 15, cancellationToken: ct));
-
-        return filas.Select(f => new CambioChecklist(
-            f.Grupo, f.ActividadNombre, DateOnly.FromDateTime(f.Fecha), Enum.Parse<EstadoChecklist>(f.Estado),
-            f.Observacion, f.Usuario, ComoOffset(f.Cuando)!.Value)).ToList();
+        var filas = await BitacoraConsultas.UltimosCambios(db, maximo).ToListAsync(ct);
+        return filas.ConvertAll(f => new CambioChecklist(
+            f.Grupo, f.ActividadNombre, f.Fecha, f.Estado, f.Observacion, f.Usuario, KbTiempo.ComoOffset(f.Cuando)!.Value));
     }
 
-    private Task<SqlConnection> Abrir(CancellationToken ct) => factory.OpenAsync(ct);
+    private Task<int> CorregirAsync(int actividadId, DateOnly fecha, EstadoChecklist estado, string? observacion, string usuario, CancellationToken ct) =>
+        db.BitacoraChecklist.Where(c => c.Fecha == fecha && c.ActividadId == actividadId).ExecuteUpdateAsync(s => s
+            .SetProperty(c => c.Estado, estado)
+            .SetProperty(c => c.Observacion, observacion)
+            .SetProperty(c => c.ActualizadoPor, usuario)
+            .SetProperty(c => c.ActualizadoEn, c => DateTime.Now), ct);
 
-    private static ActividadBitacora Mapear(FilaActividad f) => new(f.ActividadId, f.Grupo, f.Nombre, f.Orden, f.Activa);
+    private static ActividadBitacora Mapear(BitacoraActividad a) => new(a.Id, a.Grupo, a.Nombre, a.Orden, a.Activa);
 
-    private static ItemChecklist Mapear(FilaItem f) => new(
-        f.ActividadId, f.Nombre, f.Orden, f.ActividadActiva,
-        f.Estado is null ? null : Enum.Parse<EstadoChecklist>(f.Estado),
-        f.Observacion, f.RevisadoPor, ComoOffset(f.RevisadoEn), f.ActualizadoPor, ComoOffset(f.ActualizadoEn));
+    /// <summary>Violación de una restricción UNIQUE o de la clave primaria (2627), venga directa o envuelta por EF.</summary>
+    internal static bool EsLlaveDuplicada(Exception ex) => Sql(ex) is { Number: 2627 or 2601 };
 
-    // Las fechas de SoporteKB son datetime2 (hora local del servidor, sin zona); se interpretan como hora de México.
-    private static DateTimeOffset? ComoOffset(DateTime? valor) =>
-        valor is null ? null : new DateTimeOffset(DateTime.SpecifyKind(valor.Value, DateTimeKind.Unspecified), SoporteBlunk.Application.Common.ZonaHoraria.Zona.GetUtcOffset(valor.Value));
+    /// <summary>Error de la base (conexión, restricción, tiempo de espera), con o sin el envoltorio de EF. Las excepciones propias pasan de largo.</summary>
+    internal static bool EsErrorDeBase(Exception ex) => ex is DbUpdateException or SqlException;
 
-    private sealed record FilaCambio(string Grupo, string ActividadNombre, DateTime Fecha, string Estado, string? Observacion, string Usuario, DateTime Cuando);
-
-    private sealed record FilaActividad(int ActividadId, string Grupo, string Nombre, int Orden, bool Activa);
-
-    private sealed record FilaItem(
-        int ActividadId, string Nombre, int Orden, bool ActividadActiva, string? Estado, string? Observacion,
-        string? RevisadoPor, DateTime? RevisadoEn, string? ActualizadoPor, DateTime? ActualizadoEn);
-
-    private sealed record FilaResumen(DateTime Fecha, int Ok, int Advertencia, int Falla, int Critico, int NoAplica, int Total);
+    private static SqlException? Sql(Exception ex) => ex as SqlException ?? ex.InnerException as SqlException;
 }

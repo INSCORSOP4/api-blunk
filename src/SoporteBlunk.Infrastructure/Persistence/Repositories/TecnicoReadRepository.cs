@@ -1,7 +1,9 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
+using SoporteBlunk.Application.Common;
 using SoporteBlunk.Domain.Interfaces;
 using SoporteBlunk.Domain.Models;
-using SoporteBlunk.Infrastructure.Persistence.Sql;
+using SoporteBlunk.Infrastructure.Persistence.Contexts;
+using SoporteBlunk.Infrastructure.Persistence.Queries;
 
 namespace SoporteBlunk.Infrastructure.Persistence.Repositories;
 
@@ -9,147 +11,52 @@ namespace SoporteBlunk.Infrastructure.Persistence.Repositories;
 /// En ServiceDesk no hay una tabla simple de técnicos: se consideran técnicos los usuarios
 /// que aparecen como propietario (OWNERID) de algún ticket.
 /// </summary>
-internal sealed class TecnicoReadRepository(ISqlConnectionFactory factory) : ITecnicoReadRepository
+internal sealed class TecnicoReadRepository(ServiceDeskDbContext db) : ITecnicoReadRepository
 {
-    private static CommandDefinition Cmd(string sql, object? p, CancellationToken ct) =>
-        new(sql, p, commandTimeout: TicketSql.CommandTimeoutSeconds, cancellationToken: ct);
-
-    private static readonly string NombreTecnico = TicketSql.FullName("u");
-
     public async Task<IReadOnlyList<Tecnico>> ListarAsync(CancellationToken ct)
     {
-        var sql = $"""
-            SELECT s.OWNERID AS Id, ISNULL({NombreTecnico}, CONCAT('Usuario ', s.OWNERID)) AS Nombre
-            FROM WorkOrderStates s
-            LEFT JOIN AaaUser u ON u.USER_ID = s.OWNERID
-            WHERE s.OWNERID IS NOT NULL
-            GROUP BY s.OWNERID, u.FIRST_NAME, u.LAST_NAME
-            ORDER BY 2
-            """;
-
-        await using var cn = await factory.OpenAsync(ct);
-        return (await cn.QueryAsync<Tecnico>(Cmd(sql, null, ct))).AsList();
+        var filas = await TecnicoConsultas.ListaOrdenada(db).ToListAsync(ct);
+        return filas.ConvertAll(f => new Tecnico(f.TecnicoId!.Value, Nombre(f.TecnicoId, f.Nombre, f.Apellido)));
     }
 
     public async Task<IReadOnlyList<TecnicoCarga>> CargaAsync(CancellationToken ct)
     {
-        await using var cn = await factory.OpenAsync(ct);
-        return (await cn.QueryAsync<TecnicoCarga>(Cmd(CargaSql(filtrar: false), null, ct))).AsList();
+        var filas = await TecnicoConsultas.Carga(db, null).ToListAsync(ct);
+        return filas.ConvertAll(ACarga);
     }
 
     public async Task<TecnicoCarga?> CargaAsync(long tecnicoId, CancellationToken ct)
     {
-        await using var cn = await factory.OpenAsync(ct);
-        return await cn.QueryFirstOrDefaultAsync<TecnicoCarga>(Cmd(CargaSql(filtrar: true), new { tecnicoId }, ct));
+        var fila = await TecnicoConsultas.Carga(db, tecnicoId).FirstOrDefaultAsync(ct);
+        return fila is null ? null : ACarga(fila);
     }
-
-    private static string CargaSql(bool filtrar) => $"""
-        SELECT s.OWNERID AS TecnicoId,
-               ISNULL({NombreTecnico}, CONCAT('Usuario ', s.OWNERID)) AS Tecnico,
-               ISNULL(SUM(CASE WHEN st.ISPENDING = 1 THEN 1 ELSE 0 END), 0) AS Abiertos,
-               ISNULL(SUM(CASE WHEN st.ISPENDING = 1 AND s.ISOVERDUE = 1 THEN 1 ELSE 0 END), 0) AS Vencidos,
-               COUNT(*) AS Total
-        FROM WorkOrderStates s
-        JOIN StatusDefinition st ON st.STATUSID = s.STATUSID
-        LEFT JOIN AaaUser u ON u.USER_ID = s.OWNERID
-        WHERE s.OWNERID IS NOT NULL {(filtrar ? "AND s.OWNERID = @tecnicoId" : "")}
-        GROUP BY s.OWNERID, u.FIRST_NAME, u.LAST_NAME
-        ORDER BY Abiertos DESC, Total DESC
-        """;
 
     public async Task<TecnicoProductividad?> ProductividadAsync(long tecnicoId, DateOnly? desde, DateOnly? hasta, CancellationToken ct)
     {
-        var p = new DynamicParameters();
-        p.Add("tecnicoId", tecnicoId);
-        var where = new List<string> { "s.OWNERID = @tecnicoId" };
-        SqlTime.AddCreatedRange(where, p, desde, hasta);
-
-        await using var cn = await factory.OpenAsync(ct);
-        var row = await cn.QuerySingleOrDefaultAsync<FilaProductividad>(Cmd(ProductividadSql(where), p, ct));
-        if (row is not null && row.Asignados > 0) return Mapear(row);
+        var fila = await TecnicoConsultas.Base(db).DelTecnico(tecnicoId, desde, hasta).Productividad().FirstOrDefaultAsync(ct);
+        if (fila is not null && fila.Asignados > 0) return AProductividad(fila);
 
         // Sin tickets en el rango: distinguir "técnico inexistente" de "técnico sin actividad".
-        var nombre = await cn.ExecuteScalarAsync<string?>(Cmd(
-            $"SELECT TOP 1 ISNULL({NombreTecnico}, CONCAT('Usuario ', s.OWNERID)) FROM WorkOrderStates s LEFT JOIN AaaUser u ON u.USER_ID = s.OWNERID WHERE s.OWNERID = @tecnicoId",
-            new { tecnicoId }, ct));
-        return nombre is null ? null : new TecnicoProductividad(tecnicoId, nombre, 0, 0, 0, 100, null, null);
+        var conocido = await TecnicoConsultas.TecnicosConNombre(db).Where(x => x.TecnicoId == tecnicoId).FirstOrDefaultAsync(ct);
+        return conocido is null
+            ? null
+            : new TecnicoProductividad(tecnicoId, Nombre(tecnicoId, conocido.Nombre, conocido.Apellido), 0, 0, 0, 100, null, null);
     }
 
     public async Task<IReadOnlyList<TecnicoProductividad>> ListarProductividadAsync(DateOnly? desde, DateOnly? hasta, CancellationToken ct)
     {
-        var p = new DynamicParameters();
-        var where = new List<string> { "s.OWNERID IS NOT NULL" };
-        SqlTime.AddCreatedRange(where, p, desde, hasta);
-
-        await using var cn = await factory.OpenAsync(ct);
-        var filas = await cn.QueryAsync<FilaProductividad>(Cmd(ProductividadSql(where), p, ct));
-        return filas.Select(Mapear).ToList();
+        var filas = await TecnicoConsultas.Base(db).DelTecnico(null, desde, hasta).Productividad().ToListAsync(ct);
+        return filas.ConvertAll(AProductividad);
     }
-
-    // Comparte la lógica de cálculo entre "un técnico" y "todo el equipo"; solo cambia el WHERE. Siempre agrupa por
-    // OWNERID (aunque el WHERE ya filtre a uno solo): SQL Server exige que una columna fuera de función de agregado
-    // esté en el GROUP BY, y agrupar por una clave ya fija en el WHERE no cambia el resultado.
-    // La primera respuesta se mide desde que el ticket quedó asignado a su técnico actual (ASSIGNEDTIME), no desde la
-    // creación: si se reasignó después de que alguien ya había respondido, RESPONDEDTIME < ASSIGNEDTIME y ese ticket
-    // no cuenta para el promedio de este técnico (no fue él quien dio esa respuesta).
-    private string ProductividadSql(List<string> where) => $"""
-        SELECT s.OWNERID AS TecnicoId,
-               MAX(ISNULL({NombreTecnico}, CONCAT('Usuario ', s.OWNERID))) AS Tecnico,
-               COUNT(*) AS Asignados,
-               ISNULL(SUM(CASE WHEN st.ISPENDING = 0 THEN 1 ELSE 0 END), 0) AS Cerrados,
-               ISNULL(SUM(CASE WHEN s.ISOVERDUE = 1 THEN 1 ELSE 0 END), 0) AS Vencidos,
-               CAST(AVG(CASE WHEN w.RESPONDEDTIME > s.ASSIGNEDTIME
-                             THEN (w.RESPONDEDTIME - s.ASSIGNEDTIME) / 3600000.0 END) AS float) AS PromedioHorasPrimeraRespuesta,
-               CAST(AVG(CASE WHEN st.ISPENDING = 0 AND w.COMPLETEDTIME > w.CREATEDTIME
-                             THEN (w.COMPLETEDTIME - w.CREATEDTIME) / 3600000.0 END) AS float) AS PromedioHorasResolucion
-        FROM WorkOrder w
-        JOIN WorkOrderStates s ON s.WORKORDERID = w.WORKORDERID
-        JOIN StatusDefinition st ON st.STATUSID = s.STATUSID
-        LEFT JOIN AaaUser u ON u.USER_ID = s.OWNERID
-        WHERE {string.Join(" AND ", where)}
-        GROUP BY s.OWNERID
-        ORDER BY Asignados DESC
-        """;
-
-    private static TecnicoProductividad Mapear(FilaProductividad f) => new(
-        f.TecnicoId, f.Tecnico, f.Asignados, f.Cerrados, f.Vencidos,
-        SlaPct(f.Asignados, f.Vencidos), f.PromedioHorasPrimeraRespuesta, f.PromedioHorasResolucion);
-
-    private static double SlaPct(int asignados, int vencidos) =>
-        asignados == 0 ? 100 : Math.Round((asignados - vencidos) * 100.0 / asignados, 2);
-
-    private sealed record FilaProductividad(
-        long TecnicoId, string Tecnico, int Asignados, int Cerrados, int Vencidos,
-        double? PromedioHorasPrimeraRespuesta, double? PromedioHorasResolucion);
 
     public async Task<IReadOnlyList<ProductividadPunto>> TendenciaProductividadAsync(
         long tecnicoId, DateOnly desde, DateOnly hasta, Agrupacion agrupacion, CancellationToken ct)
     {
-        var p = new DynamicParameters();
-        p.Add("tecnicoId", tecnicoId);
-        p.Add("desdeMs", SqlTime.StartOfDayMs(desde));
-        p.Add("hastaMs", SqlTime.StartOfDayMs(hasta.AddDays(1)));
-
-        var bucket = Bucket("w.CREATEDTIME", agrupacion);
-        var sql = $"""
-            SELECT {bucket} AS Periodo,
-                   COUNT(*) AS Asignados,
-                   ISNULL(SUM(CASE WHEN st.ISPENDING = 0 THEN 1 ELSE 0 END), 0) AS Cerrados,
-                   ISNULL(SUM(CASE WHEN s.ISOVERDUE = 1 THEN 1 ELSE 0 END), 0) AS Vencidos,
-                   CAST(AVG(CASE WHEN w.RESPONDEDTIME > s.ASSIGNEDTIME
-                                 THEN (w.RESPONDEDTIME - s.ASSIGNEDTIME) / 3600000.0 END) AS float) AS PromedioHorasPrimeraRespuesta,
-                   CAST(AVG(CASE WHEN st.ISPENDING = 0 AND w.COMPLETEDTIME > w.CREATEDTIME
-                                 THEN (w.COMPLETEDTIME - w.CREATEDTIME) / 3600000.0 END) AS float) AS PromedioHorasResolucion
-            FROM WorkOrder w
-            JOIN WorkOrderStates s ON s.WORKORDERID = w.WORKORDERID
-            JOIN StatusDefinition st ON st.STATUSID = s.STATUSID
-            WHERE s.OWNERID = @tecnicoId AND w.CREATEDTIME >= @desdeMs AND w.CREATEDTIME < @hastaMs
-            GROUP BY {bucket}
-            """;
-
-        await using var cn = await factory.OpenAsync(ct);
-        var filas = (await cn.QueryAsync<FilaTendencia>(Cmd(sql, p, ct)))
-            .ToDictionary(f => DateOnly.FromDateTime(f.Periodo));
+        // El periodo (día/semana/mes en hora de México) se arma en código: LINQ no traduce AT TIME ZONE.
+        var filas = await TecnicoConsultas.FilasParaTendencia(db, tecnicoId, desde, hasta).ToListAsync(ct);
+        var porPeriodo = filas
+            .GroupBy(f => Inicio(DateOnly.FromDateTime(TiempoServiceDesk.AFecha(f.Creado)!.Value.DateTime), agrupacion))
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         // Rellena con periodos vacíos (0 asignados, SLA 100%, sin promedio) para que la serie no tenga huecos.
         var puntos = new List<ProductividadPunto>();
@@ -157,9 +64,7 @@ internal sealed class TecnicoReadRepository(ISqlConnectionFactory factory) : ITe
         var fin = Inicio(hasta, agrupacion);
         while (actual <= fin)
         {
-            puntos.Add(filas.TryGetValue(actual, out var f)
-                ? new ProductividadPunto(actual, f.Asignados, f.Cerrados, SlaPct(f.Asignados, f.Vencidos), f.PromedioHorasPrimeraRespuesta, f.PromedioHorasResolucion)
-                : new ProductividadPunto(actual, 0, 0, 100, null, null));
+            puntos.Add(porPeriodo.TryGetValue(actual, out var grupo) ? Punto(actual, grupo) : new ProductividadPunto(actual, 0, 0, 100, null, null));
             actual = agrupacion switch
             {
                 Agrupacion.Mes => actual.AddMonths(1),
@@ -170,27 +75,40 @@ internal sealed class TecnicoReadRepository(ISqlConnectionFactory factory) : ITe
         return puntos;
     }
 
-    // Mismo criterio de "inicio de semana/mes" que el Tablero (Application.Features.Dashboard), duplicado a propósito
-    // para no acoplar este repositorio al de Dashboard por un detalle tan pequeño.
-    private static string Bucket(string columna, Agrupacion agrupacion)
+    private static ProductividadPunto Punto(DateOnly periodo, List<TendenciaFila> filas)
     {
-        var dia = $"CAST({SqlTime.Local(columna)} AS date)";
-        return agrupacion switch
-        {
-            Agrupacion.Mes => $"DATEFROMPARTS(YEAR({dia}), MONTH({dia}), 1)",
-            Agrupacion.Semana => $"DATEADD(DAY, -(DATEDIFF(DAY, '19000101', {dia}) % 7), {dia})",
-            _ => dia,
-        };
+        var vencidos = filas.Count(f => f.Vencido == true);
+        return new ProductividadPunto(
+            periodo, filas.Count, filas.Count(f => f.Pendiente == false), SlaPct(filas.Count, vencidos),
+            Promedio(filas.Where(f => f.Respondido > f.Asignado).Select(f => (f.Respondido!.Value - f.Asignado!.Value) / 3600000.0)),
+            Promedio(filas.Where(f => f.Pendiente == false && f.Completado > f.Creado).Select(f => (f.Completado!.Value - f.Creado!.Value) / 3600000.0)));
     }
 
+    private static double? Promedio(IEnumerable<double> valores)
+    {
+        var lista = valores.ToList();
+        return lista.Count == 0 ? null : lista.Average();
+    }
+
+    private static string Nombre(long? id, string? nombre, string? apellido) =>
+        TiempoServiceDesk.NombreCompleto(nombre, apellido) ?? $"Usuario {id}";
+
+    private static TecnicoCarga ACarga(CargaFila f) =>
+        new(f.TecnicoId!.Value, Nombre(f.TecnicoId, f.Nombre, f.Apellido), f.Abiertos, f.Vencidos, f.Total);
+
+    private static TecnicoProductividad AProductividad(ProductividadFila f) => new(
+        f.TecnicoId!.Value, Nombre(f.TecnicoId, f.Nombre, f.Apellido), f.Asignados, f.Cerrados, f.Vencidos,
+        SlaPct(f.Asignados, f.Vencidos), f.PromedioHorasPrimeraRespuesta, f.PromedioHorasResolucion);
+
+    private static double SlaPct(int asignados, int vencidos) =>
+        asignados == 0 ? 100 : Math.Round((asignados - vencidos) * 100.0 / asignados, 2);
+
+    // Mismo criterio de "inicio de semana/mes" que el Tablero (Application.Features.Dashboard), duplicado a propósito
+    // para no acoplar este repositorio al de Dashboard por un detalle tan pequeño.
     private static DateOnly Inicio(DateOnly d, Agrupacion a) => a switch
     {
         Agrupacion.Mes => new DateOnly(d.Year, d.Month, 1),
         Agrupacion.Semana => d.AddDays(-(((int)d.DayOfWeek + 6) % 7)),
         _ => d,
     };
-
-    private sealed record FilaTendencia(
-        DateTime Periodo, int Asignados, int Cerrados, int Vencidos,
-        double? PromedioHorasPrimeraRespuesta, double? PromedioHorasResolucion);
 }

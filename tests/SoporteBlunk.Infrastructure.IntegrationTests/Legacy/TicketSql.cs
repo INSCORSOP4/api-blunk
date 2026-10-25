@@ -3,6 +3,8 @@ using SoporteBlunk.Domain.Models;
 
 namespace SoporteBlunk.Infrastructure.Persistence.Sql;
 
+// SQL original de Dapper, conservado solo para las copias de referencia usadas en los tests de paridad.
+
 internal static class TicketSql
 {
     public const int CommandTimeoutSeconds = 30;
