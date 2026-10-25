@@ -1,11 +1,14 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
 using SoporteBlunk.Application.Abstractions;
+using SoporteBlunk.Application.Common.Exceptions;
 using SoporteBlunk.Application.Common.Options;
 using SoporteBlunk.Domain.Interfaces;
 using SoporteBlunk.Infrastructure.Exports;
 using SoporteBlunk.Infrastructure.Persistence;
+using SoporteBlunk.Infrastructure.Persistence.Contexts;
 using SoporteBlunk.Infrastructure.Persistence.Kb;
 using SoporteBlunk.Infrastructure.Persistence.Msdb;
 using SoporteBlunk.Infrastructure.Persistence.Repositories;
@@ -53,8 +56,31 @@ public static class DependencyInjection
         // Archivos de confianza (SIA/repbi/olap): un script externo en el 10.0.3.8 llena esta
         // tabla en SoporteKB; aquí solo se lee.
         services.AddScoped<IArchivosReadRepository, ArchivosReadRepository>();
+        AddContextos(services, configuration, connectionString);
         AddAuth(services, configuration);
         return services;
+    }
+
+    /// <summary>
+    /// Un DbContext por base. Los de bases ajenas (ServiceDesk, msdb) son de solo lectura y sin seguimiento de cambios.
+    /// Sin cadena configurada, el contexto opcional lanza la misma excepción que hoy produce su fábrica de conexiones
+    /// (la API arranca y el endpoint responde 503), y solo al resolverlo.
+    /// </summary>
+    private static void AddContextos(IServiceCollection services, IConfiguration configuration, string serviceDesk)
+    {
+        services.AddDbContext<ServiceDeskDbContext>(o => o.UseSqlServer(serviceDesk).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+
+        var kb = configuration.GetConnectionString("SoporteKB");
+        if (string.IsNullOrWhiteSpace(kb))
+            services.AddScoped<KbDbContext>(_ => throw new KbNoDisponibleException("La base de conocimiento no está configurada (ConnectionStrings:SoporteKB)."));
+        else
+            services.AddDbContext<KbDbContext>(o => o.UseSqlServer(kb));
+
+        var msdb = configuration.GetConnectionString("Msdb");
+        if (string.IsNullOrWhiteSpace(msdb))
+            services.AddScoped<MsdbDbContext>(_ => throw new UtileriaNoDisponibleException("La consulta de jobs no está configurada (ConnectionStrings:Msdb)."));
+        else
+            services.AddDbContext<MsdbDbContext>(o => o.UseSqlServer(msdb).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
     }
 
     private static void AddAuth(IServiceCollection services, IConfiguration configuration)
