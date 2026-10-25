@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__ServiceDesk: ${ConnectionStrings__ServiceDesk:?Define ConnectionStrings__ServiceDesk en .env}
+      Auth__JwtKey: ${Auth__JwtKey:?Define Auth__JwtKey en .env (minimo 32 caracteres)}
+      ConnectionStrings__Msdb: ${ConnectionStrings__Msdb:-}
+      ConnectionStrings__Microsip: ${ConnectionStrings__Microsip:-}
+      ConnectionStrings__MicrosipEscritura: ${ConnectionStrings__MicrosipEscritura:-}
+      ConnectionStrings__SoporteKB: ${ConnectionStrings__SoporteKB:-}
+    restart: unless-stopped

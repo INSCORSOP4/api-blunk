@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SoporteBlunk.Api/SoporteBlunk.Api.csproj" />
+    <Project Path="src/SoporteBlunk.Application/SoporteBlunk.Application.csproj" />
+    <Project Path="src/SoporteBlunk.Domain/SoporteBlunk.Domain.csproj" />
+    <Project Path="src/SoporteBlunk.Infrastructure/SoporteBlunk.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SoporteBlunk.Application.Tests/SoporteBlunk.Application.Tests.csproj" />
+    <Project Path="tests/SoporteBlunk.Infrastructure.IntegrationTests/SoporteBlunk.Infrastructure.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
