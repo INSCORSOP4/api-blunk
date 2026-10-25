@@ -5,3 +5,17 @@ obj/
 logs/
 .env
 TestResults/
+
+# Variables de entorno y secretos (solo se versiona .env.example)
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+
+# Salidas generadas
+publish/
+*.log
+soporteblunk.json
+.idea/
+.vscode/
