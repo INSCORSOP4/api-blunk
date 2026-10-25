@@ -12,4 +12,12 @@ internal static class ContextoDePrueba
         ServiceDeskDbContext.Configurar(opciones, cadena);
         return new ServiceDeskDbContext(opciones.Options);
     }
+
+    /// <summary>SoporteKB con la misma configuración que la API. Sin cadena (null) queda "no configurada".</summary>
+    public static KbDbContext Kb(string? cadena)
+    {
+        var opciones = new DbContextOptionsBuilder<KbDbContext>();
+        KbDbContext.Configurar(opciones, cadena);
+        return new KbDbContext(opciones.Options);
+    }
 }

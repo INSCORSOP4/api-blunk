@@ -62,22 +62,22 @@ public class ContextosTests
     }
 
     [Fact]
-    public void Sin_SoporteKB_la_API_arranca_y_el_contexto_falla_con_503_al_resolverlo()
+    public async Task Sin_SoporteKB_el_contexto_se_resuelve_y_abrir_la_conexion_falla_con_503()
     {
         using var sp = Proveedor(kb: false, msdb: true);
         using var scope = sp.CreateScope();
 
-        scope.ServiceProvider.Invoking(s => s.GetRequiredService<KbDbContext>())
-            .Should().Throw<KbNoDisponibleException>();
+        var kb = scope.ServiceProvider.GetRequiredService<KbDbContext>(); // resolverlo no falla: los demás endpoints siguen funcionando
+        await kb.Database.Invoking(d => d.OpenConnectionAsync()).Should().ThrowAsync<KbNoDisponibleException>().WithMessage("*no está configurada*");
     }
 
     [Fact]
-    public void Sin_Msdb_la_API_arranca_y_el_contexto_falla_con_503_al_resolverlo()
+    public async Task Sin_Msdb_el_contexto_se_resuelve_y_abrir_la_conexion_falla_con_503()
     {
         using var sp = Proveedor(kb: true, msdb: false);
         using var scope = sp.CreateScope();
 
-        scope.ServiceProvider.Invoking(s => s.GetRequiredService<MsdbDbContext>())
-            .Should().Throw<UtileriaNoDisponibleException>();
+        var msdb = scope.ServiceProvider.GetRequiredService<MsdbDbContext>();
+        await msdb.Database.Invoking(d => d.OpenConnectionAsync()).Should().ThrowAsync<UtileriaNoDisponibleException>().WithMessage("*no está configurada*");
     }
 }

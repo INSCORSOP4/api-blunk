@@ -1,8 +1,6 @@
 using System.Text.RegularExpressions;
 using FluentAssertions;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
 using SoporteBlunk.Domain.Interfaces;
 using SoporteBlunk.Domain.Models;
 using SoporteBlunk.Infrastructure.Persistence;
@@ -241,20 +239,9 @@ public class TicketsParidadTests
     }
 }
 
-/// <summary>
-/// Compara todo el modelo de EF Core contra INFORMATION_SCHEMA de la base real: que existan las tablas y columnas y que los
-/// tipos coincidan con los que SqlClient exige al leer (bigint → long, bit → bool, ...). Reporta todos los desajustes juntos.
-/// </summary>
+/// <summary>El modelo de ServiceDesk debe corresponder al esquema real (ver <see cref="SondaEsquema"/>).</summary>
 public class EsquemaServiceDeskTests
 {
-    private static readonly Dictionary<Type, string[]> Compatibles = new()
-    {
-        [typeof(long)] = ["bigint"],
-        [typeof(int)] = ["int"],
-        [typeof(bool)] = ["bit"],
-        [typeof(string)] = ["nvarchar", "varchar", "nchar", "char", "ntext", "text"],
-    };
-
     [SkippableFact]
     public async Task El_modelo_coincide_con_el_esquema_real()
     {
@@ -262,38 +249,8 @@ public class EsquemaServiceDeskTests
         Skip.If(string.IsNullOrWhiteSpace(cs), "Falta ConnectionStrings__ServiceDesk");
 
         using var db = ContextoDePrueba.ServiceDesk(cs!);
-        var reales = new Dictionary<(string Tabla, string Columna), string>(new ClaveInsensible());
-        await using (var cn = new SqlConnection(cs))
-        {
-            await cn.OpenAsync();
-            await using var cmd = new SqlCommand("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS", cn);
-            await using var r = await cmd.ExecuteReaderAsync();
-            while (await r.ReadAsync()) reales[(r.GetString(0), r.GetString(1))] = r.GetString(2).ToLowerInvariant();
-        }
-
-        var problemas = new List<string>();
-        foreach (var entidad in db.Model.GetEntityTypes())
-        {
-            var tabla = entidad.GetTableName()!;
-            foreach (var propiedad in entidad.GetProperties())
-            {
-                var columna = propiedad.GetColumnName(StoreObjectIdentifier.Table(tabla, entidad.GetSchema()))!;
-                var clr = Nullable.GetUnderlyingType(propiedad.ClrType) ?? propiedad.ClrType;
-                if (!reales.TryGetValue((tabla, columna), out var tipo)) { problemas.Add($"{tabla}.{columna}: no existe"); continue; }
-                if (Compatibles.TryGetValue(clr, out var validos) && !validos.Contains(tipo))
-                    problemas.Add($"{tabla}.{columna}: el modelo espera {clr.Name} pero la columna es {tipo}");
-            }
-        }
+        var problemas = await SondaEsquema.CompararAsync(db, cs!);
 
         problemas.Should().BeEmpty("el modelo de EF debe corresponder al esquema real de ServiceDesk:\n" + string.Join("\n", problemas));
-    }
-
-    private sealed class ClaveInsensible : IEqualityComparer<(string Tabla, string Columna)>
-    {
-        public bool Equals((string Tabla, string Columna) a, (string Tabla, string Columna) b) =>
-            string.Equals(a.Tabla, b.Tabla, StringComparison.OrdinalIgnoreCase) && string.Equals(a.Columna, b.Columna, StringComparison.OrdinalIgnoreCase);
-
-        public int GetHashCode((string Tabla, string Columna) k) =>
-            HashCode.Combine(k.Tabla.ToUpperInvariant(), k.Columna.ToUpperInvariant());
     }
 }

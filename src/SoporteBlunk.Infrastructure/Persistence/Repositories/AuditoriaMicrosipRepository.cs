@@ -1,14 +1,15 @@
-using Dapper;
-using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using SoporteBlunk.Application.Abstractions;
 using SoporteBlunk.Application.Common.Exceptions;
+using SoporteBlunk.Domain.Entities.Kb;
 using SoporteBlunk.Domain.Models;
-using SoporteBlunk.Infrastructure.Persistence.Kb;
+using SoporteBlunk.Infrastructure.Persistence.Contexts;
+using SoporteBlunk.Infrastructure.Persistence.Queries;
 
 namespace SoporteBlunk.Infrastructure.Persistence.Repositories;
 
 /// <summary>Bitácora de cambios en MICROSIP, guardada en SoporteKB (aud.CambioMicrosip).</summary>
-internal sealed class AuditoriaMicrosipRepository(IKbConnectionFactory factory) : IAuditoriaMicrosipRepository
+internal sealed class AuditoriaMicrosipRepository(KbDbContext db) : IAuditoriaMicrosipRepository
 {
     private const string Aviso =
         "La bitácora de cambios no está disponible (¿se ejecutó db/002_auditoria_microsip.sql en SoporteKB?). No se escribió nada en MICROSIP.";
@@ -18,27 +19,24 @@ internal sealed class AuditoriaMicrosipRepository(IKbConnectionFactory factory) 
     {
         try
         {
-            await using var conn = await factory.OpenAsync(ct);
-            return await conn.ExecuteScalarAsync<long>(new CommandDefinition(
-                """
-                INSERT INTO aud.CambioMicrosip (UsuarioEmail, UsuarioNombre, MicrosipUsuarioId, MicrosipNombre, Accion, Resultado, Antes, Despues)
-                OUTPUT INSERTED.CambioId
-                VALUES (@Email, @Nombre, @UsuarioId, @MicrosipNombre, @Accion, 'Pendiente', @Antes, @Despues);
-                """,
-                new
-                {
-                    quien.Email,
-                    quien.Nombre,
-                    UsuarioId = objetivo.UsuarioId,
-                    MicrosipNombre = objetivo.Nombre,
-                    Accion = accion.ToString(),
-                    Antes = antes,
-                    Despues = despues,
-                },
-                commandTimeout: 15, cancellationToken: ct));
+            var cambio = new AuditoriaCambioMicrosip
+            {
+                UsuarioEmail = quien.Email,
+                UsuarioNombre = quien.Nombre,
+                MicrosipUsuarioId = objetivo.UsuarioId,
+                MicrosipNombre = objetivo.Nombre,
+                Accion = accion,
+                Resultado = ResultadoCambio.Pendiente,
+                Antes = antes,
+                Despues = despues,
+            };
+            db.CambiosMicrosip.Add(cambio);
+            await db.SaveChangesAsync(ct);
+            return cambio.Id;
         }
-        catch (SqlException ex)
+        catch (Exception ex) when (BitacoraRepository.EsErrorDeBase(ex))
         {
+            db.ChangeTracker.Clear();
             throw new UtileriaNoDisponibleException(Aviso, ex);
         }
     }
@@ -47,13 +45,11 @@ internal sealed class AuditoriaMicrosipRepository(IKbConnectionFactory factory) 
     {
         try
         {
-            await using var conn = await factory.OpenAsync(ct);
-            await conn.ExecuteAsync(new CommandDefinition(
-                "UPDATE aud.CambioMicrosip SET Resultado = @Resultado, Error = @Error WHERE CambioId = @Id;",
-                new { Id = cambioId, Resultado = resultado.ToString(), Error = error },
-                commandTimeout: 15, cancellationToken: ct));
+            await db.CambiosMicrosip.Where(c => c.Id == cambioId).ExecuteUpdateAsync(s => s
+                .SetProperty(c => c.Resultado, resultado)
+                .SetProperty(c => c.Error, error), ct);
         }
-        catch (SqlException ex)
+        catch (Exception ex) when (BitacoraRepository.EsErrorDeBase(ex))
         {
             throw new UtileriaNoDisponibleException("No se pudo anotar el resultado en la bitácora de cambios.", ex);
         }
@@ -63,27 +59,16 @@ internal sealed class AuditoriaMicrosipRepository(IKbConnectionFactory factory) 
     {
         try
         {
-            await using var conn = await factory.OpenAsync(ct);
-            // Fecha se guarda con SYSDATETIME() (hora local del servidor, sin zona): se le agrega el desfase actual del servidor.
-            var filas = await conn.QueryAsync<Fila>(new CommandDefinition(
-                """
-                SELECT TOP (@Maximo) CambioId,
-                       TODATETIMEOFFSET(Fecha, DATEPART(TZoffset, SYSDATETIMEOFFSET())) AS Fecha,
-                       UsuarioEmail, UsuarioNombre, MicrosipUsuarioId, MicrosipNombre, Accion, Resultado, Antes, Despues, Error
-                FROM aud.CambioMicrosip ORDER BY CambioId DESC;
-                """,
-                new { Maximo = maximo }, commandTimeout: 15, cancellationToken: ct));
-            return filas.Select(f => new CambioMicrosip(
-                f.CambioId, f.Fecha, f.UsuarioEmail, f.UsuarioNombre, f.MicrosipUsuarioId, f.MicrosipNombre,
-                Enum.Parse<AccionMicrosip>(f.Accion), Enum.Parse<ResultadoCambio>(f.Resultado), f.Antes, f.Despues, f.Error)).ToList();
+            var filas = await db.CambiosMicrosip.OrderByDescending(c => c.Id).Take(maximo).ToListAsync(ct);
+
+            // Fecha se guarda con SYSDATETIME() (hora local del servidor, sin zona) y se interpreta como hora de México.
+            return filas.ConvertAll(f => new CambioMicrosip(
+                f.Id, KbTiempo.ComoOffset(f.Fecha)!.Value, f.UsuarioEmail, f.UsuarioNombre, f.MicrosipUsuarioId, f.MicrosipNombre,
+                f.Accion, f.Resultado, f.Antes, f.Despues, f.Error));
         }
-        catch (SqlException ex)
+        catch (Exception ex) when (BitacoraRepository.EsErrorDeBase(ex))
         {
             throw new UtileriaNoDisponibleException(Aviso, ex);
         }
     }
-
-    private sealed record Fila(
-        long CambioId, DateTimeOffset Fecha, string UsuarioEmail, string UsuarioNombre, int MicrosipUsuarioId,
-        string MicrosipNombre, string Accion, string Resultado, string? Antes, string Despues, string? Error);
 }
