@@ -32,6 +32,8 @@ public sealed class WorkOrderStates
     public long? TipoSolicitudId { get; init; }
     public long? NivelId { get; init; }
     public long? TecnicoId { get; init; }
+    /// <summary>ASSIGNEDTIME: cuándo quedó asignada a su técnico actual (epoch ms; 0 = sin dato).</summary>
+    public long? Asignado { get; init; }
     public bool? Vencido { get; init; }
     public bool? Reabierto { get; init; }
 }

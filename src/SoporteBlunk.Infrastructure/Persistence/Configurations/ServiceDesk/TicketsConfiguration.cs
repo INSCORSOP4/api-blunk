@@ -40,6 +40,7 @@ internal sealed class WorkOrderStatesConfiguration : IEntityTypeConfiguration<Wo
         b.Property(x => x.TipoSolicitudId).HasColumnName("REQUESTTYPEID");
         b.Property(x => x.NivelId).HasColumnName("LEVELID");
         b.Property(x => x.TecnicoId).HasColumnName("OWNERID");
+        b.Property(x => x.Asignado).HasColumnName("ASSIGNEDTIME");
         b.Property(x => x.Vencido).HasColumnName("ISOVERDUE");
         b.Property(x => x.Reabierto).HasColumnName("REOPENED");
     }
