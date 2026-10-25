@@ -15,6 +15,7 @@ namespace SoporteBlunk.Infrastructure.IntegrationTests;
 /// Pruebas contra SoporteKB real (servidor de pruebas). Cada prueba usa rutas, etiquetas y un correo únicos
 /// y borra todo lo que creó al terminar. Se omiten si no hay ConnectionStrings__SoporteKB.
 /// </summary>
+[Collection(ColeccionSoporteKb.Nombre)]
 public sealed class KbImportacionRepositoryTests : IAsyncLifetime
 {
     private readonly string _cadena = Environment.GetEnvironmentVariable("ConnectionStrings__SoporteKB") ?? "";
@@ -28,7 +29,14 @@ public sealed class KbImportacionRepositoryTests : IAsyncLifetime
     private string Prefijo => $"__test_{_id}";
     private string Etiqueta => $"zz{_id}";
 
-    private KbImportacionRepository Repo() => new(new KbConnectionFactory(_cadena));
+    private readonly List<SoporteBlunk.Infrastructure.Persistence.Contexts.KbDbContext> _contextos = [];
+
+    private KbImportacionRepository Repo()
+    {
+        var db = ContextoDePrueba.Kb(_cadena);
+        _contextos.Add(db);
+        return new KbImportacionRepository(db);
+    }
 
     private IReadOnlyList<NotaProcesada> Notas(params (string Ruta, string Contenido)[] notas) =>
         notas.Select(n => _procesador.ProcesarArchivo(new ArchivoSubido($"{Prefijo}/{n.Ruta}", Encoding.UTF8.GetBytes(n.Contenido))).Nota!).ToList();
@@ -43,6 +51,7 @@ public sealed class KbImportacionRepositoryTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        foreach (var c in _contextos) await c.DisposeAsync();
         if (string.IsNullOrWhiteSpace(_cadena)) return;
         await using var cn = await Abrir();
         await cn.ExecuteAsync("""

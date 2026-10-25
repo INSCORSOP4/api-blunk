@@ -38,7 +38,7 @@ Si una cadena opcional falta, resolver su contexto lanza la misma excepción que
 | 0 | Contextos y convenciones | Hecha |
 | 1 | ServiceDesk: catálogos, tickets, técnicos, dashboard | Hecha y validada contra la base real |
 | 2 | SoporteKB: Bitácora, Auditoría de Microsip, Archivos | Hecha y validada contra la base real |
-| 3 | SoporteKB: Conocimiento | Pendiente |
+| 3 | SoporteKB: Conocimiento (lectura, búsqueda e importador) | Hecha y validada contra la base real |
 | 4 | msdb: jobs | Pendiente |
 | 5 | Microsip y FORTIA (linked server) | Se quedan en Dapper por decisión |
 
@@ -76,3 +76,26 @@ en los últimos decimales; los tiempos y los nombres completos se arman en códi
 
 Los tests de escritura usan grupos y correos únicos por ejecución (`zz-t2-...`), corren en una colección propia (no en paralelo con los
 de lectura) y borran lo que crean al terminar.
+
+## Fase 3 (Conocimiento): decisiones y las únicas consultas con SQL propio
+
+- **Búsqueda**: se conserva el cotejo `Latin1_General_100_CI_AI` (`EF.Functions.Collate`) y `LIKE ... ESCAPE ''` (`EF.Functions.Like`), el orden
+  por prioridad de título (todas las palabras en el título primero) y el fragmento de ~240 caracteres, que se calcula en SQL con
+  `CHARINDEX`/`SUBSTRING` para no traer el texto completo de cada nota.
+- **EF no puede ordenar después de proyectar a un constructor** (`new Registro(...)`): se ordena antes de proyectar, o se proyecta a una clase con
+  inicializador y el récord se arma en memoria.
+- **Tres consultas con SQL propio**, todas por una razón concreta y todas con parámetros:
+  1. `sys.fulltext_indexes` (¿existe el índice de texto completo?): catálogo del sistema, sin entidad.
+  2. y 3. Lectura de la nota por ruta y de las etiquetas existentes con `WITH (UPDLOCK, HOLDLOCK)`: EF Core no tiene pistas de bloqueo y
+     son lo que impide que dos importaciones simultáneas creen la misma nota o etiqueta (hay un test con seis importaciones a la vez).
+- **El importador** conserva su estructura: la fila de la importación se crea fuera de la transacción (si el guardado falla queda "Fallida"),
+  una sola transacción para todas las notas, y el resultado de cada nota (Nueva, Actualizada, SinCambios) sale del hash. Las inserciones
+  pasan por `SaveChanges` (agrupadas en lotes) y las actualizaciones por `ExecuteUpdate`; la hora de cierre y de actualización la pone el
+  servidor SQL (`GETUTCDATE()`).
+- **Un valor más largo que `HasMaxLength` no se trunca**: EF manda el parámetro sin límite y es SQL Server quien rechaza (hay un test).
+- La fábrica de conexiones de Dapper (`KbConnectionFactory`) y las copias Dapper de los repositorios viven ahora en `tests/.../Legacy`;
+  producción solo conserva Dapper en `JobsReadRepository` (msdb, Fase 4) y `MicrosipRepository` (excluido).
+
+Los tests de esta fase comparan Dapper y EF sobre las notas reales (más de 60 combinaciones de búsqueda y el detalle de todas las notas) y,
+para el importador, el **estado final de la base** tras un mismo guion de importaciones. `AvisosEfRealTests` ejecuta todas las lecturas contra
+las bases reales y exige que EF Core no emita ningún aviso.
