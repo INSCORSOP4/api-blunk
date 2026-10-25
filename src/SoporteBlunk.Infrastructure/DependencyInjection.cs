@@ -69,9 +69,7 @@ public static class DependencyInjection
     /// </summary>
     private static void AddContextos(IServiceCollection services, IConfiguration configuration, string serviceDesk)
     {
-        services.AddDbContext<ServiceDeskDbContext>(o => o
-            .UseSqlServer(serviceDesk, sql => sql.CommandTimeout(TicketSql.CommandTimeoutSeconds))
-            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+        services.AddDbContext<ServiceDeskDbContext>(o => ServiceDeskDbContext.Configurar(o, serviceDesk));
 
         var kb = configuration.GetConnectionString("SoporteKB");
         if (string.IsNullOrWhiteSpace(kb))

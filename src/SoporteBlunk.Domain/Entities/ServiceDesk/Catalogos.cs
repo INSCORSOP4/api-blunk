@@ -7,6 +7,8 @@ public sealed class StatusDefinition
     public long Id { get; init; }
     public string? Nombre { get; init; }
     public bool Eliminado { get; init; }
+    /// <summary>ISPENDING: el estado cuenta como abierto.</summary>
+    public bool? EsPendiente { get; init; }
 }
 
 public sealed class PriorityDefinition

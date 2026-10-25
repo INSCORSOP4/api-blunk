@@ -30,8 +30,7 @@ public class CatalogosSqlTests
         { "departamentos", "DepartmentDefinition", "DEPTID", "DEPTNAME", "DEPTNAME", "" },
     };
 
-    private static ServiceDeskDbContext Contexto(string cs = "Server=x;Database=x") =>
-        new(new DbContextOptionsBuilder<ServiceDeskDbContext>().UseSqlServer(cs).Options);
+    private static ServiceDeskDbContext Contexto(string cs = "Server=x;Database=x") => ContextoDePrueba.ServiceDesk(cs);
 
     [Theory]
     [MemberData(nameof(Esperados))]
