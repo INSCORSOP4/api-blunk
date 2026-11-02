@@ -26,12 +26,12 @@ internal sealed class TicketExcelExporter : ITicketExcelExporter
             var row = i + 2;
             ws.Cell(row, 1).Value = t.Id;
             ws.Cell(row, 2).Value = Neutralizar(t.Titulo);
-            ws.Cell(row, 3).Value = t.Estado;
-            ws.Cell(row, 4).Value = t.Prioridad ?? string.Empty;
-            ws.Cell(row, 5).Value = t.Categoria ?? string.Empty;
-            ws.Cell(row, 6).Value = t.Grupo ?? string.Empty;
-            ws.Cell(row, 7).Value = t.Tecnico ?? string.Empty;
-            ws.Cell(row, 8).Value = t.Solicitante ?? string.Empty;
+            ws.Cell(row, 3).Value = Neutralizar(t.Estado);
+            ws.Cell(row, 4).Value = Neutralizar(t.Prioridad ?? string.Empty);
+            ws.Cell(row, 5).Value = Neutralizar(t.Categoria ?? string.Empty);
+            ws.Cell(row, 6).Value = Neutralizar(t.Grupo ?? string.Empty);
+            ws.Cell(row, 7).Value = Neutralizar(t.Tecnico ?? string.Empty);
+            ws.Cell(row, 8).Value = Neutralizar(t.Solicitante ?? string.Empty);
             ws.Cell(row, 9).Value = t.Vencido ? "Sí" : "No";
             Fecha(ws.Cell(row, 10), t.Creado);
             Fecha(ws.Cell(row, 11), t.Vence);
@@ -52,7 +52,8 @@ internal sealed class TicketExcelExporter : ITicketExcelExporter
         if (valor is { } v) cell.Value = v.DateTime;
     }
 
-    // Evita inyección de fórmulas: un título que empiece con = + - @ se guarda como texto.
+    // Evita inyección de fórmulas en TODA celda de texto (los datos vienen de ServiceDesk, que escriben los usuarios):
+    // si empieza con = + - @ o con tabulador/retorno, se antepone una comilla para que Excel lo trate como texto.
     private static string Neutralizar(string texto) =>
-        texto.Length > 0 && "=+-@".Contains(texto[0]) ? "'" + texto : texto;
+        texto.Length > 0 && "=+-@\t\r".Contains(texto[0]) ? "'" + texto : texto;
 }

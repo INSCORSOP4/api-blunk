@@ -18,6 +18,8 @@ using SoporteBlunk.Infrastructure.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService();
+// No anunciar el servidor web en la cabecera "Server".
+builder.WebHost.ConfigureKestrel(k => k.AddServerHeader = false);
 
 builder.Host.UseSerilog((ctx, services, cfg) => cfg
     .ReadFrom.Configuration(ctx.Configuration)
@@ -103,34 +105,46 @@ builder.Services.AddOptions<AuthorizationOptions>()
             .Build());
 builder.Services.AddAuthorization();
 
-// Tope global de intentos de login contra la API (además del bloqueo por correo del caso de uso).
+// Topes por IP de origen: así una sola máquina no puede agotar el cupo de todos (un tope global permitiría
+// dejar sin login a todo el mundo con unas pocas peticiones).
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    static RateLimitPartition<string> PorIp(HttpContext ctx, string politica, int limite) =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            $"{politica}:{ctx.Connection.RemoteIpAddress?.ToString() ?? "desconocida"}",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = limite, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 });
+
     // Las subidas son pesadas (analizan y guardan cientos de notas): pocas por minuto.
-    o.AddFixedWindowLimiter("importar", w =>
-    {
-        w.PermitLimit = 10;
-        w.Window = TimeSpan.FromMinutes(1);
-        w.QueueLimit = 0;
-    });
+    o.AddPolicy("importar", ctx => PorIp(ctx, "importar", 10));
     // Cambios en MICROSIP: una persona no necesita más de unos cuantos por minuto.
-    o.AddFixedWindowLimiter("escritura", w =>
-    {
-        w.PermitLimit = 20;
-        w.Window = TimeSpan.FromMinutes(1);
-        w.QueueLimit = 0;
-    });
-    o.AddFixedWindowLimiter("login", w =>
-    {
-        w.PermitLimit = 30;
-        w.Window = TimeSpan.FromMinutes(1);
-        w.QueueLimit = 0;
-    });
+    o.AddPolicy("escritura", ctx => PorIp(ctx, "escritura", 20));
+    // Además del bloqueo por correo del caso de uso (LoginThrottle).
+    o.AddPolicy("login", ctx => PorIp(ctx, "login", 20));
 });
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
+
+// Cabeceras de seguridad para una API JSON: sin sniffing, sin marcos, sin referrer y sin caché de respuestas con datos.
+// La CSP restrictiva se omite en Development para no romper la interfaz de Swagger.
+var esDev = app.Environment.IsDevelopment();
+app.Use(async (ctx, next) =>
+{
+    var h = ctx.Response.Headers;
+    h.XContentTypeOptions = "nosniff";
+    h.XFrameOptions = "DENY";
+    h["Referrer-Policy"] = "no-referrer";
+    h["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+    if (!esDev)
+    {
+        h.ContentSecurityPolicy = "default-src 'none'; frame-ancestors 'none'";
+        h.CacheControl = "no-store";
+    }
+    await next();
+});
+if (!esDev) app.UseHsts();
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 // El registro de peticiones va ANTES del manejador de errores: así ve el código final (401, 403, 404…) y no
